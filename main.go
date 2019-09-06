@@ -20,11 +20,21 @@ var screenSizeY = 360
 // Let's have a variable to define the size of a single game block (cell)
 var blockSize = 15
 
+// Structure which keeps information about the current game play
 type GameInfo struct {
     level int
+    maxScore int
     score int
-    numEnemies int
+    isGameOver bool
     maze []string
+}
+
+// Structure which keeps information about a level
+type LevelInfo struct {
+    pacmanSpeed float64
+    enemySpeed float64
+    numEnemies int
+    mazeFile string
 }
 
 // Structure to hold information about a single game object
@@ -34,10 +44,25 @@ type Sprite struct {
 	active bool
 	x float64
 	y float64
-	speed float64
+	speed float64 // used for PacMan and enemies
 	direction byte
 }
 
+// Let's define all the levels
+var LEVELS = map[int]LevelInfo {
+    1: LevelInfo{
+        pacmanSpeed: 2,
+        enemySpeed: 2,
+        numEnemies: 4,
+        mazeFile: "maze01.txt",
+    },
+    2: LevelInfo{
+        pacmanSpeed: 2,
+        enemySpeed: 3,
+        numEnemies: 5,
+        mazeFile: "maze01.txt",
+    },
+}
 // Variable to hold Game Info
 var gameInfo GameInfo
 
@@ -55,6 +80,9 @@ var mazeSprites [][]*Sprite
 
 // Variable to hold the enemies
 var enemies []*Sprite
+
+// Variable to hold the game over text
+var gameOver Sprite
 
 // Note that all the arrays above are initialized with * (pointers) to keep only the reference. Otherwise a copy of the object will be created when accessing elements inside them
 
@@ -233,20 +261,91 @@ func locateGameObjects() {
                 dot := createSprite("assets/food.png", blockSize, blockSize, x, y)
                 food = append(food, &dot)
                 mazeSprites[row][col] = &dot
+                gameInfo.maxScore = gameInfo.maxScore+1
 			}
 		}
 	}
 
 	// Now, let's place enemies on random places (random places where there's a path (food))
-	for i := 0; i < gameInfo.numEnemies; i++ {
+	for i := 0; i < LEVELS[gameInfo.level].numEnemies; i++ {
 	    // get random food
 	    rand.Seed(time.Now().UnixNano())
 	    randomFood := food[rand.Intn(len(food))]
 
 	    enemy := createSprite("assets/enemy.png", blockSize, blockSize, randomFood.x, randomFood.y)
+
+	    colFood, rowFood := getMazePointFromPosition(randomFood.x, randomFood.y)
+        enemy.direction = getMovableDirection(colFood, rowFood, enemy.direction)
+	    fmt.Printf("Enemy loaded to position: x=%v, y=%v\n", randomFood.x, randomFood.y)
         enemies = append(enemies, &enemy)
-        fmt.Printf("Enemy loaded to position: x=%v, y=%v\n", randomFood.x, randomFood.y)
 	}
+
+	// Let's load game over image as Sprite
+	gameOver = createSprite("assets/gameover.png", blockSize*10, blockSize*7, float64(screenSizeX)/2.0-float64(blockSize*10)/2.0, float64(screenSizeY)/2.0-float64(blockSize*7)/2.0)
+}
+/*
+    Function: getMovableDirection
+    Get a movable direction from the given maze point
+    Outputs a byte indicating direction: U=UP, R=RIGHT , D=DOWN, L=LEFT
+*/
+func getMovableDirection(col int, row int, currentDirection byte) byte {
+    // To find that let's have a array to store all possible directions
+    possibilities := []byte{}
+
+    // let's also have an map to store if any direction is possible
+    directions := map[byte]bool{
+        'U': false,
+        'R': false,
+        'D': false,
+        'L': false,
+    }
+
+    // add UP if UP is a valid point and no wall
+    if isValidPoint(col, row-1) &&  gameInfo.maze[row-1][col] != '0' {
+        possibilities = append(possibilities, 'U')
+        directions['U']=true
+    }
+    // add RIGHT if RIGHT is a valid point and no wall
+    if isValidPoint(col+1, row) &&  gameInfo.maze[row][col+1] != '0' {
+        possibilities = append(possibilities, 'R')
+        directions['R']=true
+    }
+    // add DOWN if DOWN is a valid point and no wall
+    if isValidPoint(col, row+1) &&  gameInfo.maze[row+1][col] != '0' {
+        possibilities = append(possibilities, 'D')
+        directions['D']=true
+    }
+    // add LEFT if LEFT is a valid point and no wall
+    if isValidPoint(col-1, row) &&  gameInfo.maze[row][col-1] != '0' {
+        possibilities = append(possibilities, 'L')
+        directions['L']=true
+    }
+
+    rand.Seed(time.Now().UnixNano())
+    direction := possibilities[rand.Intn(len(possibilities))]
+
+    // if the direction we get is UP but sprite is moving DOWN and still possible to move DOWN, move it DOWN!
+    if direction == 'U' && currentDirection == 'D' && directions['D'] {
+        return 'D'
+    }
+
+    // if the direction we get is DOWN but sprite is moving UP and still possible to move UP, move it UP!
+    if direction == 'D' && currentDirection == 'U' && directions['U'] {
+        return 'U'
+    }
+
+    // if the direction we get is LEFT but sprite is moving RIGHT and still possible to move RIGHT, move it RIGHT!
+    if direction == 'L' && currentDirection == 'R' && directions['R'] {
+        return 'R'
+    }
+
+    // if the direction we get is LEFT but sprite is moving RIGHT and still possible to move RIGHT, move it RIGHT!
+    if direction == 'R' && currentDirection == 'L' && directions['L'] {
+        return 'L'
+    }
+
+    // if it doesn't satisfy above conditions, let's return the direction we got!
+    return direction
 }
 
 /*
@@ -263,7 +362,7 @@ func movePacman() {
     y := pacman.y
     direction := pacman.direction
 
-    // let's get the aligned x and y values to the current location
+    // let's get the aligned x and y values to the current location (aligned values means the values which makes PacMan center on the path)
     col, row := getMazePointFromPosition(x, y)
     alignedX, alignedY := getPositionFromMazePoint(col, row)
 
@@ -328,60 +427,44 @@ func eatFood() {
 func moveEnemy(sprite *Sprite) {
     x := sprite.x
     y := sprite.y
-    // direction := sprite.direction
 
     // current maze point of the enemy
     col, row := getMazePointFromPosition(x, y)
 
-    // Let's find a good direction for the enemy to move
+    // current maze point of the pacman
+    colPac, rowPac := getMazePointFromPosition(pacman.x, pacman.y)
 
-    // To find that let's have a scoring mechanism to each direction which Enemy can move
-    movementScore := [4]int{0, 0, 0, 0} // array indices are in order UP, RIGHT , DOWN, LEFT
-
-    // grant 1 point to UP if UP is a valid point and no wall
-    if isValidPoint(col, row-1) &&  gameInfo.maze[row-1][col] != '0' {
-        movementScore[0] = movementScore[0]+1
-    }
-    // grant 1 point to RIGHT if RIGHT is a valid point and no wall
-    if isValidPoint(col+1, row) &&  gameInfo.maze[row][col+1] != '0' {
-        movementScore[1] = movementScore[1]+1
-    }
-    // grant 1 point to DOWN if DOWN is a valid point and no wall
-    if isValidPoint(col, row+1) &&  gameInfo.maze[row+1][col] != '0' {
-        movementScore[2] = movementScore[2]+1
-    }
-    // grant 1 point to LEFT if LEFT is a valid point and no wall
-    if isValidPoint(col-1, row) &&  gameInfo.maze[row][col-1] != '0' {
-        movementScore[3] = movementScore[3]+1
+    // Let's check if ENEMIE HIT the PACMAN!. If so make game over
+    if col == colPac && row == rowPac{
+        gameInfo.isGameOver = true
     }
 
-    // Let's find the directions with maximum scores
-    maxScores := []int{}
-    for i, score := range movementScore {
-        if len(maxScores) == 0 {
-            maxScores = append(maxScores, i)
-        } else if (score == maxScores[0]) {
-            maxScores = append(maxScores, i)
-        } else if (score > maxScores[0]) {
-            maxScores = []int{i}
-        }
+    // Let's get the aligned position to keep enemy on center of the path
+    alignedX, alignedY := getPositionFromMazePoint(col, row)
+
+    // make the direction as the direction where enemy is moving
+    direction := sprite.direction
+
+    if math.Abs(x-alignedX) > 6 || math.Abs(y-alignedY) > 6 {
+        direction = getMovableDirection(col, row, sprite.direction)
     }
+    sprite.direction = direction
 
-    // out of maximums, lets get a random direction
-    movingDirectionIndex := rand.Intn(len(maxScores))
-
-    switch maxScores[movingDirectionIndex] {
-    case 0:
+    // Let's move the enemy
+    switch direction {
+    case 'U':
         sprite.y = sprite.y-sprite.speed
-    case 1:
+        sprite.x = alignedX
+    case 'R':
         sprite.x = sprite.x+sprite.speed
-    case 2:
+        sprite.y = alignedY
+    case 'D':
         sprite.y = sprite.y+sprite.speed
-    case 3:
+        sprite.x = alignedX
+    case 'L':
         sprite.x = sprite.x-sprite.speed
+        sprite.y = alignedY
     }
-
-    // fmt.Printf("Max total: %v direction: %v\n", len(maxScores), maxScores[movingDirectionIndex])
 
 }
 
@@ -393,21 +476,31 @@ func update(screen *ebiten.Image) error {
 		return nil
 	}
 
-	// Let's code what should happen on each frame (Game Starts from here)
-    movePacman()
-    eatFood()
 
-	for _, wallPiece := range mazeWall {
+	// Let's code what should happen on each frame (Game Starts from here)
+
+    // Let's draw the Walls and food first
+    // Go through all the sprites in mazeWall and add them to the screen
+    for _, wallPiece := range mazeWall {
 	    drawSprite(screen, wallPiece)
     }
 
+    // Go through all the sprites in food and add them to the screen
     for _, dot := range food {
 	    drawSprite(screen, dot)
     }
 
-    for _, enemy := range enemies {
-        moveEnemy(enemy)
-	    drawSprite(screen, enemy)
+    // If the game is not over yet, Let's make the pacman and enemies visible and allow to move theme
+    if !gameInfo.isGameOver {
+        movePacman()
+        eatFood()
+
+        for _, enemy := range enemies {
+            moveEnemy(enemy)
+    	    drawSprite(screen, enemy)
+        }
+    } else {
+        drawSprite(screen, &gameOver)
     }
 
     drawSprite(screen, &pacman)
@@ -416,16 +509,18 @@ func update(screen *ebiten.Image) error {
 	return nil
 }
 
-func main() {
+func initLevel(level int) {
     gameInfo = GameInfo {
-        level: 1,
+        level: level,
         score: 1,
-        numEnemies: 4,
-        maze: readMazeFile("maze02.txt"),
+        maxScore: 1,
+        maze: readMazeFile(LEVELS[level].mazeFile),
     }
-
     locateGameObjects()
+}
 
+func main() {
+    initLevel(1)
 	if err := ebiten.Run(update, screenSizeX, screenSizeY, 2, "Simple PacMan Game"); err != nil {
 		log.Fatal(err)
 	}
