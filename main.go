@@ -1,8 +1,11 @@
 package main
 
+/*
+Let's import the required packages
+Except "github.com/hajimehoshi/ebiten", all the other packages are default packages that comes with Go Language
+*/
 import (
     "bufio"
-    "fmt"
     "github.com/hajimehoshi/ebiten"
     "github.com/hajimehoshi/ebiten/ebitenutil"
 	"log"
@@ -13,42 +16,55 @@ import (
     "time"
 )
 
-// Let's have variables to define the screen window of the game
+/*
+    ################
+    ## Structures ##
+    ################
+*/
+// Structure which keeps information about the current game play
+type GameInfo struct {
+    level int // holds current level
+    maxScore int // holds maximum score to achieve inorder to finish the level (number of food points)
+    score int // holds score of current level (number of food eaten by PacMan)
+    isStarted bool // when the game is started (PacMan is moving), this flag is set to true
+    isGameOver bool // when the game is over (enemy eat PacMan), this flag is set to true
+    isLevelComplete bool // when the level is completed (PacMan eat all food), this flag is set to true
+    maze []string // holds the maze file as string array, each string is a row. each character in the string is a column
+}
+
+// Structure which keeps information about a level
+type LevelInfo struct {
+    pacmanSpeed float64 // holds the speed of the PacMan on a level
+    enemySpeed float64 // holds the speed of an enemy on a level
+    numEnemies int // holds the number of elements which should loaded into a level
+    mazeFile string // holds the path to the file containing the maze on a level
+}
+
+// Structure to hold information about a single game object
+type Sprite struct {
+    img *ebiten.Image // holds the image displayed as the game object
+    faces map[byte]*ebiten.Image // holds the images of different faces/animations of this sprite. This is a map structure
+	visibility bool // holds if the game object is visible or not
+	x float64 // holds the x position of the game object in the screen
+	y float64 // holds the y position of the game object in the screen
+	speed float64 // holds the speed of moving game objects (used for PacMan and enemies)
+	direction byte // holds the current moving direction of moving game objects (U=UP, R=RIGHT, D=DOWN, L=LEFT)
+}
+
+/*
+    ###############################
+    ## Defining Global Variables ##
+    ###############################
+*/
+
+// Let's have variables to hold the Size of screen window of the game
 var screenSizeX = 420
 var screenSizeY = 360
 
 // Let's have a variable to define the size of a single game block (cell)
 var blockSize = 15
 
-// Structure which keeps information about the current game play
-type GameInfo struct {
-    level int
-    maxScore int
-    score int
-    isGameOver bool
-    maze []string
-}
-
-// Structure which keeps information about a level
-type LevelInfo struct {
-    pacmanSpeed float64
-    enemySpeed float64
-    numEnemies int
-    mazeFile string
-}
-
-// Structure to hold information about a single game object
-type Sprite struct {
-    img *ebiten.Image
-	visibility bool
-	active bool
-	x float64
-	y float64
-	speed float64 // used for PacMan and enemies
-	direction byte
-}
-
-// Let's define all the levels
+// Let's define all the levels for the game
 var LEVELS = map[int]LevelInfo {
     1: LevelInfo{
         pacmanSpeed: 2,
@@ -60,9 +76,10 @@ var LEVELS = map[int]LevelInfo {
         pacmanSpeed: 2,
         enemySpeed: 3,
         numEnemies: 5,
-        mazeFile: "maze01.txt",
+        mazeFile: "maze02.txt",
     },
 }
+
 // Variable to hold Game Info
 var gameInfo GameInfo
 
@@ -81,10 +98,58 @@ var mazeSprites [][]*Sprite
 // Variable to hold the enemies
 var enemies []*Sprite
 
-// Variable to hold the game over text
-var gameOver Sprite
-
 // Note that all the arrays above are initialized with * (pointers) to keep only the reference. Otherwise a copy of the object will be created when accessing elements inside them
+
+
+/*
+    Variables to hold popups
+    Popups in the game are: Game Over, Level Complete, Win, Start
+*/
+var gameOver Sprite
+var levelComplete Sprite
+var win Sprite
+var startLogo Sprite
+
+/*
+    ###############################################
+    ## Functions to read files (maze and assets) ##
+    ###############################################
+*/
+
+/*
+    Function: readMazeFile
+    Read file which containing the maze information
+    Inputs: path to the file
+    Outputs an array containing the rows of the maze, each row as a string
+*/
+func readMazeFile(fileName string) []string {
+    // create an empty array to hold the maze
+    maze := []string{}
+
+    // Open the file and load bytes into a variable
+    file, err := os.Open(fileName)
+
+    // if error occurred while loading the file log it
+    if err != nil {
+        log.Fatal(err)
+    }
+    // close the file once this method has completely executed
+    defer file.Close()
+
+    // create a scanner to read the bytes as string
+    scanner := bufio.NewScanner(file)
+
+    // get rows from the scanner until all rows has finished scanning
+    for scanner.Scan() {
+        // get the row as a string
+        line := scanner.Text()
+
+        // push each string line to the maze array
+    	maze = append(maze, line)
+    }
+
+    return maze
+}
 
 /*
     Function: createSprite
@@ -122,55 +187,19 @@ func createSprite(imgFile string, width int, height int, x float64, y float64) S
 	return Sprite{
 	    img: img,
 	    visibility: true,
-	    active: true,
 	    x: x,
 	    y: y,
 	    speed: 1,
 	}
 }
 
-/*
-    Function: setSpritePosition
-    Change the XY position value of a given sprite
-    Inputs: Reference to the sprite and position (x,y)
-    Note that the reference is passed here as we want to update the real Sprite object other than an object copy
-*/
-func setSpritePosition(sprite *Sprite, x float64, y float64) {
-    sprite.x = x
-    sprite.y = y
-}
 
 /*
-    Function: drawSprite
-    Render any sprite (Game object) on the screen.
-    Inputs: screen and the sprite to render has to be given as arguments
+    ##########################################
+    ## Position and Grid supporting methods ##
+    ##########################################
 */
-func drawSprite(screen *ebiten.Image, sprite *Sprite) {
-    if sprite.visibility {
-        opts := &ebiten.DrawImageOptions{}
-        opts.GeoM.Translate(sprite.x, sprite.y)
-        // opts.GeoM.Scale(sprite.x, sprite.y)
-        screen.DrawImage(sprite.img, opts)
-    }
-}
 
-
-func readMazeFile(fileName string) []string {
-    maze := []string{}
-    file, err := os.Open(fileName)
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer file.Close()
-
-    scanner := bufio.NewScanner(file)
-    for scanner.Scan() {
-        line := scanner.Text()
-    	maze = append(maze, line)
-    }
-
-    return maze
-}
 /*
     Function: getPositionFromMaze
     Get the screen position (x, y) from maze character position (row, column)
@@ -179,6 +208,7 @@ func readMazeFile(fileName string) []string {
     Here (int, int) means that the function return two values
 */
 func getPositionFromMazePoint(col int, row int) (float64, float64) {
+    // here we are casting to float as we standard position usage in ebiten is float
     return float64(blockSize*col), float64(blockSize*row)
 }
 
@@ -188,6 +218,11 @@ func getPositionFromMazePoint(col int, row int) (float64, float64) {
     Inputs: Screen position (x, y)
 */
 func getMazePointFromPosition(x float64, y float64) (int, int) {
+    /*
+    We have to find the correct grid cell when the screen position (x, y) is supplied
+        grid column at x = x/blockSize (integer value)
+        grid column at y = y/blockSize (integer value)
+    */
     col := int(math.Round(x/float64(blockSize)))
     row := int(math.Round(y/float64(blockSize)))
     return col, row
@@ -200,89 +235,26 @@ func getMazePointFromPosition(x float64, y float64) (int, int) {
 */
 func isValidPoint(col int, row int) bool {
     // Let's define the minimum and maximum column and row values according to the maze matrix
-    minRow := 0
-    maxRow := len(gameInfo.maze)-1
-    minCol := 0
-    maxCol := len(gameInfo.maze[0])-1
+    minRow := 0 // 1st row
+    maxRow := len(gameInfo.maze)-1 // last row
 
+    minCol := 0 // 1st column
+    maxCol := len(gameInfo.maze[0])-1 // last column
+
+    // if given column is not within the 1st column and last column, the point is invalid
     if col < minCol || col > maxCol {
         return false
     }
 
+    // if given row is not within the 1st row and last row, the point is invalid
     if row < minRow || row > maxRow {
         return false
     }
 
+    // otherwise it's a valid point
     return true
 }
 
-/*
-    Function: locateGameObjects
-    Create game objects (Sprites) and locate them according to the maze (loaded from the file)
-
-    Each character meaning in the maze:
-    P - location of the player
-    0 - location of a wall piece
-    . - Location of a food piece (PacMan can move only through dots)
-    E - Enemy which eats the PacMan
-
-*/
-func locateGameObjects() {
-    // initialize the variable to store pieces of wall with an empty array
-    mazeWall = []*Sprite{}
-
-    // initialize the variable to store enemies with an empty array
-    enemies = []*Sprite{}
-
-    // initialize the variable to store enemies with an empty array
-    food = []*Sprite{}
-
-    // initialize multi dimensional array to hold still element references
-    mazeSprites = make([][]*Sprite, len(gameInfo.maze))
-    for i := range mazeSprites {
-        mazeSprites[i] = make([]*Sprite, len(gameInfo.maze[0]))
-    }
-
-    // Read maze which is loaded from the file. each row has a string (line)
-    for row, line := range gameInfo.maze {
-        // each character in the string (line) is treated as a column
-		for col, char := range line {
-		    x, y := getPositionFromMazePoint(col, row)
-		    // Let's check each character and place corresponding objects to that places
-			switch char {
-            case '0':
-                wall := createSprite("assets/wall.png", blockSize, blockSize, x, y)
-                mazeWall = append(mazeWall, &wall)
-                mazeSprites[row][col] = &wall
-			case 'P':
-				pacman = createSprite("assets/pacman.png", blockSize, blockSize, x, y)
-				fmt.Printf("PacMan loaded to position: x=%v, y=%v\n", x, y)
-            case '.':
-                dot := createSprite("assets/food.png", blockSize, blockSize, x, y)
-                food = append(food, &dot)
-                mazeSprites[row][col] = &dot
-                gameInfo.maxScore = gameInfo.maxScore+1
-			}
-		}
-	}
-
-	// Now, let's place enemies on random places (random places where there's a path (food))
-	for i := 0; i < LEVELS[gameInfo.level].numEnemies; i++ {
-	    // get random food
-	    rand.Seed(time.Now().UnixNano())
-	    randomFood := food[rand.Intn(len(food))]
-
-	    enemy := createSprite("assets/enemy.png", blockSize, blockSize, randomFood.x, randomFood.y)
-
-	    colFood, rowFood := getMazePointFromPosition(randomFood.x, randomFood.y)
-        enemy.direction = getMovableDirection(colFood, rowFood, enemy.direction)
-	    fmt.Printf("Enemy loaded to position: x=%v, y=%v\n", randomFood.x, randomFood.y)
-        enemies = append(enemies, &enemy)
-	}
-
-	// Let's load game over image as Sprite
-	gameOver = createSprite("assets/gameover.png", blockSize*10, blockSize*7, float64(screenSizeX)/2.0-float64(blockSize*10)/2.0, float64(screenSizeY)/2.0-float64(blockSize*7)/2.0)
-}
 /*
     Function: getMovableDirection
     Get a movable direction from the given maze point
@@ -321,6 +293,7 @@ func getMovableDirection(col int, row int, currentDirection byte) byte {
         directions['L']=true
     }
 
+    // Let's get a random direction out of all the possible directions. This is the standard way of generating a random integer in Go.
     rand.Seed(time.Now().UnixNano())
     direction := possibilities[rand.Intn(len(possibilities))]
 
@@ -349,8 +322,28 @@ func getMovableDirection(col int, row int, currentDirection byte) byte {
 }
 
 /*
+    Function: drawSprite
+    Render any sprite (Game object) on the screen.
+    Inputs: screen and the sprite to render has to be given as arguments
+*/
+func drawSprite(screen *ebiten.Image, sprite *Sprite) {
+    if sprite.visibility {
+        opts := &ebiten.DrawImageOptions{}
+        opts.GeoM.Translate(sprite.x, sprite.y)
+        // opts.GeoM.Scale(sprite.x, sprite.y)
+        screen.DrawImage(sprite.img, opts)
+    }
+}
+
+/*
+    ############################################
+    ## Defining behaviours of movable objects ##
+    ############################################
+*/
+
+/*
     Function: movePacman
-    Move the pacman on keypress, otherwise keep him idle
+    Move the PacMan on keypress, otherwise keep him idle
 */
 func movePacman() {
     /*
@@ -396,9 +389,13 @@ func movePacman() {
     // Now let's check whether if the new position of PacMan is hitting a Wall
     colNew, rowNew := getMazePointFromPosition(x, y)
     if isValidPoint(colNew, rowNew) && gameInfo.maze[rowNew][colNew] != '0' {
+        // it's a valid point in the maze and there's no wall in this point. PacMan is good to move. Let's move it to the new position
         pacman.x = x
         pacman.y = y
         pacman.direction = direction
+
+        // Now let's set the face of the PacMan according to the direction
+        pacman.img = pacman.faces[direction]
     }
 }
 
@@ -421,9 +418,18 @@ func eatFood() {
         // increase the player score by 1
         gameInfo.score = gameInfo.score+1
     }
+
+    // let's check if user has eat all food. if all food has been eaten, let's complete the level
+    if gameInfo.score >= gameInfo.maxScore {
+        gameInfo.isLevelComplete = true
+    }
 }
 
-// RE-WRITE THIS FUNCTION
+/*
+    Function: moveEnemy
+    Moving a given enemy for a possible direction
+    Input: reference to a enemy game object
+*/
 func moveEnemy(sprite *Sprite) {
     x := sprite.x
     y := sprite.y
@@ -442,10 +448,23 @@ func moveEnemy(sprite *Sprite) {
     // Let's get the aligned position to keep enemy on center of the path
     alignedX, alignedY := getPositionFromMazePoint(col, row)
 
-    // make the direction as the direction where enemy is moving
+    // make the direction to point the direction where enemy is currently moving
     direction := sprite.direction
 
-    if math.Abs(x-alignedX) > 6 || math.Abs(y-alignedY) > 6 {
+    /*
+        Enemy should not move in a single direction always. We need to find a movable direction at a junction point.
+        You can have infinite number of positions (x,y values) in a grid cell.
+        Therefore, if enemy check for possible directions at all positions in a junction, he may try to vibrate at junction.
+        Reason is that at each position in a junction, enemy thinks it's a new junction and tries to find a new direction to move.
+        So ideally, this should not happen.
+
+        Let's do a small trick to get rid of the above scenario.
+        In a junction, let's check for the distance between the grid cell left corner position and enemy's left corner position.
+        If the enemy has moved reasonable amount (identifiable amount which can make enemy to be in next block in the next move) of distance from the current grid only we find for a new direction.
+    */
+    reasonableMoveAmount := math.Floor(float64(blockSize)/2.0)-1.0 // This equation has been taken on trial and error basis. if the block size is 15, reasonable amount is 6.
+    if math.Abs(x-alignedX) > reasonableMoveAmount || math.Abs(y-alignedY) > reasonableMoveAmount {
+        // get a movable direction
         direction = getMovableDirection(col, row, sprite.direction)
     }
     sprite.direction = direction
@@ -465,8 +484,152 @@ func moveEnemy(sprite *Sprite) {
         sprite.x = sprite.x-sprite.speed
         sprite.y = alignedY
     }
-
 }
+
+
+/*
+    ########################################
+    ## Functions to initialize properties ##
+    ##      and assets for the game       ##
+    ########################################
+*/
+
+/*
+    Function: locateGameObjects
+    Create game objects (Sprites) and locate them according to the maze (loaded from the file)
+
+    Each character meaning in the maze:
+    P - location of the player
+    0 - location of a wall piece
+    . - Location of a food piece (PacMan can move only through dots)
+    E - Enemy which eats the PacMan
+
+*/
+func locateGameObjects() {
+    // initialize the variable to store pieces of wall with an empty array
+    mazeWall = []*Sprite{}
+
+    // initialize the variable to store enemies with an empty array
+    enemies = []*Sprite{}
+
+    // initialize the variable to store enemies with an empty array
+    food = []*Sprite{}
+
+    // initialize multi dimensional array to hold still element references
+    mazeSprites = make([][]*Sprite, len(gameInfo.maze))
+    for i := range mazeSprites {
+        mazeSprites[i] = make([]*Sprite, len(gameInfo.maze[0]))
+    }
+
+    // Read maze which is loaded from the file. each row has a string (line)
+    for row, line := range gameInfo.maze {
+        // each character in the string (line) is treated as a column
+		for col, char := range line {
+		    // let's get the position (left corner position x, y) of the grid cell
+		    x, y := getPositionFromMazePoint(col, row)
+		    // Let's check each character and place corresponding objects to that places
+			switch char {
+            case '0':
+                // create a Wall block for 0 point in maze and mark position to the corresponding grid cell
+                wall := createSprite("assets/wall.png", blockSize, blockSize, x, y)
+                // let's store the wall block Sprite reference in the mazeWall array
+                mazeWall = append(mazeWall, &wall)
+
+                // let's store the wall block Sprite reference in the maze grid matrix as well to quickly get the object
+                mazeSprites[row][col] = &wall
+			case 'P':
+			    // create the PacMan and mark position to the corresponding grid cell
+				pacman = createSprite("assets/pacman.png", blockSize, blockSize, x, y)
+
+				// now let's load the other faces of pacman
+				UP_SPRITE := createSprite("assets/pacmanU.png", blockSize, blockSize, x, y)
+				RIGHT_SPRITE := createSprite("assets/pacmanR.png", blockSize, blockSize, x, y)
+				DOWN_SPRITE := createSprite("assets/pacmanD.png", blockSize, blockSize, x, y)
+				LEFT_SPRITE := createSprite("assets/pacmanL.png", blockSize, blockSize, x, y)
+				IDLE_SPRITE := createSprite("assets/pacmanI.png", blockSize, blockSize, x, y)
+
+                pacman.faces = map[byte]*ebiten.Image{
+                    'U': UP_SPRITE.img,
+                    'R': RIGHT_SPRITE.img,
+                    'D': DOWN_SPRITE.img,
+                    'L': LEFT_SPRITE.img,
+                    'I': IDLE_SPRITE.img,
+                }
+
+				// Since PacMan is moving always, we don't need to add it to the maze grid matrix
+            case '.':
+                // create the food and mark position to the corresponding grid cell
+                dot := createSprite("assets/food.png", blockSize, blockSize, x, y)
+
+                // let's store the food block Sprite reference in the mazeWall array
+                food = append(food, &dot)
+
+                // let's store the food block Sprite reference in the maze grid matrix as well to quickly get the object
+                mazeSprites[row][col] = &dot
+
+                // foods are our scores, it's increase the maximum possible score by 1 as food is added to the maze
+                gameInfo.maxScore = gameInfo.maxScore+1
+			}
+		}
+	}
+
+	// Now, let's place enemies on random places (random places where there's a path (food))
+	for i := 0; i < LEVELS[gameInfo.level].numEnemies; i++ {
+	    // get random food. This is the standard way of generating a random integer in Go.
+	    rand.Seed(time.Now().UnixNano())
+	    randomFood := food[rand.Intn(len(food))]
+
+        // Let's create and enemy and mark its location at the random food. This way we can place enemies at random points in a movable path
+	    enemy := createSprite("assets/enemy.png", blockSize, blockSize, randomFood.x, randomFood.y)
+
+        // Let's also give an initial direction for the enemy to move
+        // For this we need to get the grid point which this enemy is getting placed
+	    colFood, rowFood := getMazePointFromPosition(randomFood.x, randomFood.y)
+	    // Now get a possible movable direction at that grid cell
+        enemy.direction = getMovableDirection(colFood, rowFood, enemy.direction)
+
+        // Let's add enemy to the list of enemies. We don't need to add to maze grid matrix as enemy is moving.
+        enemies = append(enemies, &enemy)
+	}
+
+	// Let's load game over image as Sprite
+	gameOver = createSprite("assets/gameover.png", blockSize*10, blockSize*7, float64(screenSizeX)/2.0-float64(blockSize*10)/2.0, float64(screenSizeY)/2.0-float64(blockSize*7)/2.0)
+
+	// Let's load level complete image as Sprite
+    levelComplete = createSprite("assets/levelcomplete.png", blockSize*12, blockSize*12, float64(screenSizeX)/2.0-float64(blockSize*12)/2, float64(screenSizeY)/2.0-float64(blockSize*12)/2)
+
+    // Let's load Win image as Sprite
+    win = createSprite("assets/win.png", blockSize*12, blockSize*12, float64(screenSizeX)/2.0-float64(blockSize*12)/2, float64(screenSizeY)/2.0-float64(blockSize*12)/2)
+
+    // Let's load Start logo image as Sprite
+    startLogo = createSprite("assets/start.png", blockSize*14, blockSize*5, float64(screenSizeX)/2.0-float64(blockSize*14)/2, float64(screenSizeY)/2.0-float64(blockSize*5)/2)
+}
+
+/*
+    Function: initLevel
+    Initialize game information to use the given level
+    Input: level
+*/
+func initLevel(level int) {
+    // initialize the game info
+    gameInfo = GameInfo {
+        level: level,
+        score: 1,
+        maxScore: 1, // this will be set after loading all the food sprites. for now let's keep it as 1
+        maze: readMazeFile(LEVELS[level].mazeFile),
+    }
+
+    // load game objects from assets and locate them in corresponding places
+    locateGameObjects()
+}
+
+
+
+/*
+    ####################
+    ## Main Game Loop ##
+    ####################
+*/
 
 // code inside update function is called every 60 times per second
 func update(screen *ebiten.Image) error {
@@ -475,7 +638,6 @@ func update(screen *ebiten.Image) error {
 	    // stop the function here
 		return nil
 	}
-
 
 	// Let's code what should happen on each frame (Game Starts from here)
 
@@ -490,38 +652,104 @@ func update(screen *ebiten.Image) error {
 	    drawSprite(screen, dot)
     }
 
-    // If the game is not over yet, Let's make the pacman and enemies visible and allow to move theme
-    if !gameInfo.isGameOver {
-        movePacman()
-        eatFood()
+    if !gameInfo.isStarted {
+        // Show Start screen when game is not yet started
+        drawSprite(screen, &startLogo)
 
-        for _, enemy := range enemies {
-            moveEnemy(enemy)
-    	    drawSprite(screen, enemy)
+        // When space is pressed, load next level
+        if ebiten.IsKeyPressed(ebiten.KeySpace) {
+            // hide start logo complete
+            gameInfo.isStarted = true
+        }
+
+    } else if gameInfo.isLevelComplete {
+        // Show Level Complete / WIN Screen on level complete
+        nextLevel := gameInfo.level+1
+
+        // if the Next level is below number of levels, show level complete text
+        if nextLevel <= len(LEVELS) {
+            drawSprite(screen, &levelComplete)
+            _, h := levelComplete.img.Size()
+            ebitenutil.DebugPrintAt(screen, "Press Space to START.....", int(levelComplete.x)+blockSize, int(levelComplete.y)+h)
+        } else {
+            // if the Next level is above number of levels, that means user has completed all the levels. Let's show win screen
+            drawSprite(screen, &win)
+            // show Text under the win sprite
+            _, h := win.img.Size()
+            ebitenutil.DebugPrintAt(screen, "Press Space to START..", int(win.x)+2*blockSize, int(win.y)+h)
+
+            // let's make the next level as 1, to start over when space is pressed
+            nextLevel = 1
+        }
+
+        // When space is pressed, load next level
+        if ebiten.IsKeyPressed(ebiten.KeySpace) {
+            // hide level complete
+            gameInfo.isLevelComplete = false
+
+            // load next level
+            initLevel(nextLevel)
+        }
+
+    } else if gameInfo.isGameOver {
+        // Show Game Over Screen  on game over
+        drawSprite(screen, &gameOver)
+
+        _, h := gameOver.img.Size()
+        ebitenutil.DebugPrintAt(screen, "Press Space to START", int(gameOver.x)+blockSize, int(gameOver.y)+h)
+
+        // When space is pressed, start from level 1
+        if ebiten.IsKeyPressed(ebiten.KeySpace) {
+            // hide game over
+            gameInfo.isGameOver = false
+            // load level 1
+            initLevel(1)
         }
     } else {
-        drawSprite(screen, &gameOver)
+        // There are no any pause screens, Let's make the pacman and enemies visible and allow them to move
+
+        // Main Game logic exist here
+        // Let's move the PacMan if user is pressing a direction key
+        movePacman()
+
+        // let PacMan eat food, if there's any food on the current location
+        eatFood()
+
+        // get each enemy from the list of enemies array and move each enemy
+        for _, enemy := range enemies {
+            // move enemy to a possible direction
+            moveEnemy(enemy)
+            // show enemy on the screen
+    	    drawSprite(screen, enemy)
+        }
+
+        // show the PACMAN on screen
+        drawSprite(screen, &pacman)
     }
 
-    drawSprite(screen, &pacman)
-
-    ebitenutil.DebugPrint(screen, "Score: "+strconv.Itoa(gameInfo.score))
+    // show the score and level on top left corner of the screen
+    ebitenutil.DebugPrint(screen, "  Level: "+strconv.Itoa(gameInfo.level)+"   Score: "+strconv.Itoa(gameInfo.score))
 	return nil
 }
 
-func initLevel(level int) {
-    gameInfo = GameInfo {
-        level: level,
-        score: 1,
-        maxScore: 1,
-        maze: readMazeFile(LEVELS[level].mazeFile),
-    }
-    locateGameObjects()
-}
 
+/*
+    #################
+    ## MAIN METHOD ##
+    #################
+*/
+// When we run this GO file, this method is getting executed first.
 func main() {
+    // Let's initialize the game information use level 1
     initLevel(1)
-	if err := ebiten.Run(update, screenSizeX, screenSizeY, 2, "Simple PacMan Game"); err != nil {
+
+    // ebiten.Run is a function given by the ebiten library.
+    // Here, we give a method which should call always (60 times per second) and size of the screen, scale the window by 1.5 and name of the window as Simple PacMan Game
+	err := ebiten.Run(update, screenSizeX, screenSizeY, 1.5, "Simple PacMan Game")
+	// Note that the update method contain all the game logic
+
+	// If there's any error occured in ebiten library to fail loading the window, let's log it
+	if err != nil {
 		log.Fatal(err)
 	}
 }
